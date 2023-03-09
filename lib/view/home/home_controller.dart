@@ -64,7 +64,7 @@ class HomeController extends GetxController {
     }
     isScanning.value = true;
     await _flutterBlue
-        .startScan(timeout: const Duration(days: 1))
+        .startScan(timeout: const Duration(seconds: 30))
         .then((value) => isScanning.value = false);
   }
 
