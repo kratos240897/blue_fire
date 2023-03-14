@@ -1,8 +1,9 @@
-import 'package:flutter_blue/flutter_blue.dart';
+import 'package:get/get.dart';
 
 class CustomBluetoothDevice {
-  late final bool isConnected;
-  late final BluetoothDevice bluetoothDevice;
+  final String name;
+  final String address;
+  final RxBool isConnected;
   CustomBluetoothDevice(
-      {this.isConnected = false, required this.bluetoothDevice});
+      {required this.name, required this.address, required this.isConnected});
 }

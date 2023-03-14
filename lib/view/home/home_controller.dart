@@ -1,42 +1,39 @@
+// ignore_for_file: avoid_print
+
 import 'dart:async';
 
 import 'package:blue_fire/core/constants/enum/snack_bar_status.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue/flutter_blue.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../core/init/utils/utils.dart';
 import '../../core/models/custom_bluetooth_device.dart';
 
 class HomeController extends GetxController {
+  static const _platform = MethodChannel('com.mythstudios.blue_fire/bluetooth');
+  late Timer _timer;
   final isScanning = false.obs;
-  var _isBluetoothPermissionGranted = false;
   var _isBluetoothScanPermissionGranted = false;
   var _isBluetoothConnectPermissionGranted = false;
   final _flutterBlue = Get.find<FlutterBlue>();
-  late final StreamSubscription<List<ScanResult>> scanResultsSubscription;
+  final _flutterReactiveBle = Get.find<FlutterReactiveBle>();
+  final RxList<CustomBluetoothDevice> pairedDevices = RxList.empty();
   final RxList<CustomBluetoothDevice> availableDevices = RxList.empty();
 
   @override
   void onReady() async {
-    scanResultsSubscription = _flutterBlue.scanResults.listen((results) {
-      for (var result in results) {
-        availableDevices
-            .add(CustomBluetoothDevice(bluetoothDevice: result.device));
-      }
-    });
     await _checkPermissions();
+    await _getPairedDevices();
   }
 
   Future<void> _checkPermissions() async {
     Map<Permission, PermissionStatus> statuses = await [
-      Permission.bluetooth,
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
-      Permission.bluetoothAdvertise,
-      Permission.location,
+      Permission.location
     ].request();
-    _isBluetoothPermissionGranted =
-        (statuses[Permission.bluetooth] as PermissionStatus).isGranted;
 
     _isBluetoothScanPermissionGranted =
         (statuses[Permission.bluetoothScan] as PermissionStatus).isGranted;
@@ -46,8 +43,7 @@ class HomeController extends GetxController {
   }
 
   Future<void> startScanning() async {
-    if (!_isBluetoothPermissionGranted ||
-        !_isBluetoothScanPermissionGranted ||
+    if (!_isBluetoothScanPermissionGranted ||
         !_isBluetoothConnectPermissionGranted) {
       Utils().showSnackBar(
           'Info',
@@ -63,26 +59,61 @@ class HomeController extends GetxController {
       return;
     }
     isScanning.value = true;
-    await _flutterBlue
-        .startScan(timeout: const Duration(seconds: 30))
-        .then((value) => isScanning.value = false);
+    _flutterReactiveBle.scanForDevices(withServices: []).listen((event) {
+      final device = CustomBluetoothDevice(
+          name: event.name.isNotEmpty ? event.name : 'Unknown Device',
+          address: event.id,
+          isConnected: false.obs);
+      availableDevices.add(device);
+    });
+    // await _platform.invokeMethod('startScanning');
+    // _timer = Timer.periodic(const Duration(seconds: 5), (_) async {
+    //   final List<dynamic> result =
+    //       await _platform.invokeMethod('getScannedDevices');
+    //   for (var element in result) {
+    //     availableDevices.add(CustomBluetoothDevice(
+    //         name: element['name'],
+    //         address: element['address'],
+    //         isConnected: false));
+    //   }
+    // });
+  }
+
+  Future<void> _getPairedDevices() async {
+    final List<dynamic> result =
+        await _platform.invokeMethod('getPairedDevices');
+    for (var element in result) {
+      pairedDevices.add(CustomBluetoothDevice(
+          name: element['name'],
+          address: element['address'],
+          isConnected: false.obs));
+    }
   }
 
   Future<void> connect(int index) async {
     final device = availableDevices[index];
-    await device.bluetoothDevice.connect();
-    Utils().showSnackBar(
-        'Success',
-        'Connected to device ${device.bluetoothDevice.name}',
-        SnackBarStatus.success);
+    try {
+      _flutterReactiveBle
+          .connectToDevice(
+              id: device.address,
+              connectionTimeout: const Duration(seconds: 10))
+          .listen((event) {
+        if (event.connectionState == DeviceConnectionState.connected) {
+          Utils().showSnackBar('Success', 'Connected to device ${device.name}',
+              SnackBarStatus.success);
+        }
+      });
+      device.isConnected.value = true;
+    } catch (e) {
+      Utils().showSnackBar('Success',
+          'Failed to connect to device ${device.name}', SnackBarStatus.success);
+    }
   }
 
   Future<void> disconnect(int index) async {
     final device = availableDevices[index];
-    await device.bluetoothDevice.disconnect();
-    Utils().showSnackBar(
-        'Success',
-        'Disconnected from device ${device.bluetoothDevice.name}',
+    device.isConnected.value = false;
+    Utils().showSnackBar('Success', 'Disconnected from device ${device.name}',
         SnackBarStatus.success);
   }
 
@@ -93,8 +124,9 @@ class HomeController extends GetxController {
   }
 
   Future<void> _stopScanning() async {
+    _timer.cancel();
     if (isScanning.isTrue) {
-      await _flutterBlue.stopScan();
+      await _platform.invokeMethod('stopScanning');
     }
   }
 }
